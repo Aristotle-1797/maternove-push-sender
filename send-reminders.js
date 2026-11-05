@@ -53,7 +53,7 @@ for (const w of windows) {
 
     const res = await messaging.sendEachForMulticast({
       tokens: devices.docs.map((x) => x.data().token),
-      data: { title: r.title, body: BODY[r.kind] || BODY.other, url: "reminders.html", tag: d.id },
+      data: { title: r.title, body: BODY[r.kind] || BODY.other, url: "reminders.html", tag: "rem-" + d.id },
       webpush: { headers: { Urgency: "high", TTL: "3600" } },
     });
 
