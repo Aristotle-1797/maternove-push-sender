@@ -39,17 +39,30 @@ let sent = 0;
 for (const w of windows) {
   const snap = await db.collectionGroup("reminders")
     .where("time", ">=", w.from).where("time", "<=", w.to).get();
+  console.log(`Window ${w.date} ${w.from}-${w.to}: ${snap.size} reminder(s) with a time in range`);
 
   for (const d of snap.docs) {
     const r = d.data();
     const slot = `${w.date}T${r.time}`;
-    if (r.repeat === "once" && r.date !== w.date) continue;       // not today
-    if (r.lastDone && (r.repeat === "once" || r.lastDone >= w.date)) continue; // already done
-    if (r.lastPushed && r.lastPushed >= slot) continue;            // already pushed
+    if (r.repeat === "once" && r.date !== w.date) {
+      console.log(`Skip "${r.title}": one-off reminder for ${r.date}, not today`);
+      continue;
+    }
+    if (r.lastDone && (r.repeat === "once" || r.lastDone >= w.date)) {
+      console.log(`Skip "${r.title}": already marked done`);
+      continue;
+    }
+    if (r.lastPushed && r.lastPushed >= slot) {
+      console.log(`Skip "${r.title}": already pushed for ${r.lastPushed}`);
+      continue;
+    }
 
     const uid = d.ref.parent.parent.id;
     const devices = await db.collection("users").doc(uid).collection("devices").get();
-    if (devices.empty) continue;
+    if (devices.empty) {
+      console.log(`Skip "${r.title}": no registered device for this user`);
+      continue;
+    }
 
     const res = await messaging.sendEachForMulticast({
       tokens: devices.docs.map((x) => x.data().token),
@@ -57,12 +70,18 @@ for (const w of windows) {
       webpush: { headers: { Urgency: "high", TTL: "3600" } },
     });
 
+    console.log(`"${r.title}" (${slot}): ${res.successCount} sent, ${res.failureCount} failed`);
+    res.responses.forEach((x) => {
+      if (!x.success) console.log("  push error:", x.error && x.error.code);
+    });
+
     // Remove tokens that no longer work (app uninstalled, permission removed)
     res.responses.forEach((x, i) => {
       if (!x.success && x.error && DEAD.includes(x.error.code)) devices.docs[i].ref.delete();
     });
 
-    await d.ref.update({ lastPushed: slot });
+    // Only mark as pushed if at least one device received it, so a failure can retry
+    if (res.successCount > 0) await d.ref.update({ lastPushed: slot });
     sent += res.successCount;
   }
 }
