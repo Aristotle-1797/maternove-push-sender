@@ -1,0 +1,25 @@
+name: Send reminder pushes
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"   # GitHub may delay runs by a few minutes
+  workflow_dispatch:
+
+concurrency:
+  group: send-reminders
+  cancel-in-progress: false
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --no-audit --no-fund
+      - run: node send-reminders.js
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          APP_TZ: Africa/Nairobi
