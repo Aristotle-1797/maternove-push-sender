@@ -12,7 +12,7 @@ const WARN_DAYS = 3; // warn this many days before a Premium pass ends
 const PREMIUM_CHECK_FROM = "09:00"; // Premium checks run once a day, in this local window
 const PREMIUM_CHECK_TO = "09:14";
 const PROGRAM_CHECK_FROM = "10:00"; // program nudges run once a day, in this local window
-const PROGRAM_CHECK_TO = "10:14";
+const PROGRAM_CHECK_TO = "10:09";
 const PROGRAM_STALE_DAYS = 21; // stop nudging a program she has not touched for this long
 
 admin.initializeApp({
