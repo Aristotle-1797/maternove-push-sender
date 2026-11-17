@@ -1,5 +1,6 @@
-// Sends due reminders and Premium expiry warnings. Each one becomes an in-app
-// notification (the bell) plus a push to the user's registered devices.
+// Sends due reminders, Premium expiry warnings and the daily program nudge. Each
+// one becomes an in-app notification (the bell) plus a push to the user's
+// registered devices.
 // Runs on a schedule (GitHub Actions). Reads only what is in the current time
 // window, so it stays inside the free Firestore quota as the app grows.
 import admin from "firebase-admin";
@@ -10,6 +11,9 @@ const NOTIF_DAYS = 30; // in-app notifications are removed after this many days 
 const WARN_DAYS = 3; // warn this many days before a Premium pass ends
 const PREMIUM_CHECK_FROM = "09:00"; // Premium checks run once a day, in this local window
 const PREMIUM_CHECK_TO = "09:14";
+const PROGRAM_CHECK_FROM = "10:00"; // program nudges run once a day, in this local window
+const PROGRAM_CHECK_TO = "10:14";
+const PROGRAM_STALE_DAYS = 14; // stop nudging a program she has not touched for this long
 
 admin.initializeApp({
   credential: admin.credential.cert(JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT)),
@@ -172,6 +176,68 @@ if (b.time >= PREMIUM_CHECK_FROM && b.time <= PREMIUM_CHECK_TO) {
       "Renew from your profile to get premium articles and ad-free use back.",
       "profile.html",
       "prem-end",
+    );
+    if (out) {
+      if (out.created) notified++;
+      sent += out.delivered;
+    }
+  }
+}
+
+/* ---------- 3) Daily program nudge (Premium only) ---------- */
+// Runs once a day (10:00-10:14 local). For each active Premium user it finds the
+// program she worked on most recently and has not finished, and tells her which
+// day is next. Skipped if she already worked on it today, or has not touched it
+// for PROGRAM_STALE_DAYS. The notification id includes the date, so a re-run in
+// the same window can never send it twice.
+if (b.time >= PROGRAM_CHECK_FROM && b.time <= PROGRAM_CHECK_TO) {
+  const premium = await db.collection("users")
+    .where("premiumUntil", ">", admin.firestore.Timestamp.fromDate(now))
+    .get();
+  console.log(`Programs: ${premium.size} active Premium user(s) to check`);
+
+  // programs/{id} is written by the seed script: { title, totalDays }
+  const programInfo = new Map();
+  async function getProgram(id) {
+    if (!programInfo.has(id)) {
+      const s = await db.collection("programs").doc(id).get();
+      programInfo.set(
+        id,
+        s.exists ? { title: s.get("title") || "your program", total: s.get("totalDays") || 0 } : null,
+      );
+    }
+    return programInfo.get(id);
+  }
+
+  for (const u of premium.docs) {
+    const progress = await u.ref.collection("programs").get(); // users/{uid}/programs/{programId}
+    let best = null;
+    for (const p of progress.docs) {
+      const info = await getProgram(p.id);
+      if (!info || !info.total) continue;
+      const done = p.get("completedDays") || [];
+      if (done.length >= info.total) continue; // finished
+      const at = p.get("updatedAt");
+      if (!at) continue;
+      const last = at.toDate();
+      if (!best || last > best.last) best = { id: p.id, info, done, last };
+    }
+    if (!best) continue;
+
+    if (localParts(best.last).date === b.date) continue; // she already worked on it today
+    if ((now.getTime() - best.last.getTime()) / 86400000 > PROGRAM_STALE_DAYS) continue;
+
+    let next = 1;
+    while (best.done.includes(next)) next++;
+    if (next > best.info.total) continue;
+
+    const out = await notify(
+      u.id,
+      `prog-${best.id}-${b.date.replace(/-/g, "")}`,
+      "Your program is waiting",
+      `Day ${next} of ${best.info.title} is ready.`,
+      `programs.html#${best.id}/${next}`,
+      "prog",
     );
     if (out) {
       if (out.created) notified++;
